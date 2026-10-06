@@ -1,6 +1,6 @@
-# ShareNep — Nepal Share Market Analysis App
+# Nepshare — Nepal Share Market Analysis App
 
-**ShareNep** is a simple, easy-to-use Nepal share-market analysis web application designed for public investors and active secondary market participants. It helps users understand NEPSE listed companies, monitor shares, evaluate potential buying and selling setups, and manage private portfolios with true NEPSE fees.
+**Nepshare** is a simple, easy-to-use Nepal share-market analysis web application designed for public investors and active secondary market participants. It helps users understand NEPSE listed companies, monitor shares, evaluate potential buying and selling setups, and manage private portfolios with true NEPSE fees.
 
 ---
 
