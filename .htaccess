@@ -1,0 +1,30 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Ensure proper MIME types for web assets
+  AddType application/javascript .js .mjs
+  AddType text/css .css
+  AddType image/svg+xml .svg
+  AddType application/json .json
+  AddType font/woff2 .woff2
+
+  # If request is for an existing file in dist/client/assets
+  RewriteCond %{REQUEST_URI} ^/assets/(.*)$ [NC]
+  RewriteCond %{DOCUMENT_ROOT}/dist/client/assets/%1 -f
+  RewriteRule ^assets/(.*)$ dist/client/assets/$1 [L]
+
+  # If request is for an existing file/dir in dist/client
+  RewriteCond %{DOCUMENT_ROOT}/dist/client/$1 -f [OR]
+  RewriteCond %{DOCUMENT_ROOT}/dist/client/$1 -d
+  RewriteRule ^(.*)$ dist/client/$1 [L]
+
+  # Route root URL directly to dist/client/index.html
+  RewriteRule ^$ dist/client/index.html [L]
+
+  # SPA Fallback for any client route that does not match an existing file
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteCond %{REQUEST_URI} !^/api/
+  RewriteRule ^(.*)$ dist/client/index.html [L]
+</IfModule>

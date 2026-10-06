@@ -18,8 +18,9 @@ import {
   TimeframeSessions,
   HoldingContext
 } from '../types/index.js';
+import { clientFallback } from './clientFallback.js';
 
-const API_BASE = '/api';
+const API_BASE = (import.meta.env.VITE_API_URL as string) || '/api';
 
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('sharenep_token');
@@ -55,35 +56,78 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return res.json();
 }
 
+async function withFallback<T>(backendCall: () => Promise<T>, fallbackCall: () => Promise<T>): Promise<T> {
+  try {
+    return await backendCall();
+  } catch (err) {
+    // If backend is unreachable, in static hosting mode, or returns 404, gracefully fall back
+    return await fallbackCall();
+  }
+}
+
 export const api = {
   // Auth
   register: (payload: { username: string; email: string; password: string; fullName: string }) =>
-    request<{ token: string; user: User }>('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }),
+    withFallback(
+      () =>
+        request<{ token: string; user: User }>('/auth/register', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        }),
+      () => clientFallback.register(payload)
+    ),
 
   login: (payload: { loginIdentifier: string; password: string }) =>
-    request<{ token: string; user: User }>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }),
+    withFallback(
+      () =>
+        request<{ token: string; user: User }>('/auth/login', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        }),
+      () => clientFallback.login(payload)
+    ),
 
   demoLogin: () =>
-    request<{ token: string; user: User }>('/auth/demo-login', {
-      method: 'POST'
-    }),
+    withFallback(
+      () =>
+        request<{ token: string; user: User }>('/auth/demo-login', {
+          method: 'POST'
+        }),
+      () => clientFallback.demoLogin()
+    ),
 
-  getMe: () => request<{ user: User }>('/auth/me'),
+  getMe: () => withFallback(() => request<{ user: User }>('/auth/me'), () => clientFallback.getMe()),
 
   // Market
-  getMarketSummary: () => request<MarketSummary>('/market/summary'),
-  getTopMovers: () => request<TopMovers>('/market/top-movers'),
+  getMarketSummary: () =>
+    withFallback(() => request<MarketSummary>('/market/summary'), () => clientFallback.getMarketSummary()),
+
+  getTopMovers: () =>
+    withFallback(() => request<TopMovers>('/market/top-movers'), () => clientFallback.getTopMovers()),
+
   getAnnouncements: (symbol?: string) =>
-    request<Announcement[]>(`/market/announcements${symbol ? `?symbol=${symbol}` : ''}`),
-  getMarketNews: () => request<MarketNews[]>('/market/news'),
-  getSectors: () => request<Array<{ name: string; nameNe?: string; companyCount: number; totalTurnover: number }>>('/market/sectors'),
-  getAiMarketAnalysis: () => request<AiMarketAnalysisResult>('/market/ai-analysis'),
+    withFallback(
+      () => request<Announcement[]>(`/market/announcements${symbol ? `?symbol=${symbol}` : ''}`),
+      () => clientFallback.getAnnouncements(symbol)
+    ),
+
+  getMarketNews: () =>
+    withFallback(() => request<MarketNews[]>('/market/news'), () => clientFallback.getMarketNews()),
+
+  getSectors: () =>
+    withFallback(
+      () =>
+        request<Array<{ name: string; nameNe?: string; companyCount: number; totalTurnover: number }>>(
+          '/market/sectors'
+        ),
+      () => clientFallback.getSectors()
+    ),
+
+  getAiMarketAnalysis: () =>
+    withFallback(
+      () => request<AiMarketAnalysisResult>('/market/ai-analysis'),
+      () => clientFallback.getAiMarketAnalysis()
+    ),
 
   // Companies
   getCompanies: (query?: string, sector?: string) => {
@@ -91,16 +135,36 @@ export const api = {
     if (query) params.set('q', query);
     if (sector && sector !== 'ALL') params.set('sector', sector);
     const qs = params.toString();
-    return request<CompanySummary[]>(`/companies${qs ? `?${qs}` : ''}`);
+    return withFallback(
+      () => request<CompanySummary[]>(`/companies${qs ? `?${qs}` : ''}`),
+      () => clientFallback.getCompanies(query, sector)
+    );
   },
 
-  getCompanyDetails: (symbol: string) => request<CompanyDetails>(`/companies/${symbol}`),
+  getCompanyDetails: (symbol: string) =>
+    withFallback(
+      () => request<CompanyDetails>(`/companies/${symbol}`),
+      () => clientFallback.getCompanyDetails(symbol)
+    ),
+
   getCandles: (symbol: string, period = '3M') =>
-    request<Candle[]>(`/companies/${symbol}/candles?period=${period}`),
+    withFallback(
+      () => request<Candle[]>(`/companies/${symbol}/candles?period=${period}`),
+      () => clientFallback.getCandles(symbol, period)
+    ),
+
   getTechnicalAnalysis: (symbol: string) =>
-    request<TechnicalSignalResult>(`/companies/${symbol}/technical`),
+    withFallback(
+      () => request<TechnicalSignalResult>(`/companies/${symbol}/technical`),
+      () => clientFallback.getTechnicalAnalysis(symbol)
+    ),
+
   getPredictions: (symbol: string) =>
-    request<PredictiveOutlookResult>(`/companies/${symbol}/predictions`),
+    withFallback(
+      () => request<PredictiveOutlookResult>(`/companies/${symbol}/predictions`),
+      () => clientFallback.getPredictions(symbol)
+    ),
+
   getPredictAiAnalysis: (
     symbol: string,
     timeframe: TimeframeSessions = 10,
@@ -112,96 +176,179 @@ export const api = {
       holdingContext,
       ...(bypassCache ? { bypassCache: 'true' } : {})
     });
-    return request<PredictAiDecisionResult>(`/companies/${symbol}/predict-ai?${params.toString()}`);
+    return withFallback(
+      () => request<PredictAiDecisionResult>(`/companies/${symbol}/predict-ai?${params.toString()}`),
+      () => clientFallback.getPredictAiAnalysis(symbol, timeframe, holdingContext)
+    );
   },
+
   getBeforeYouBuy: (symbol: string) =>
-    request<{
-      symbol: string;
-      summary: any;
-      peerComparison: any;
-      sectorMetrics: any;
-      risks: any[];
-      fundamentals: any;
-      company: any;
-    }>(`/companies/${symbol}/before-you-buy`),
+    withFallback(
+      () =>
+        request<{
+          symbol: string;
+          summary: any;
+          peerComparison: any;
+          sectorMetrics: any;
+          risks: any[];
+          fundamentals: any;
+          company: any;
+        }>(`/companies/${symbol}/before-you-buy`),
+      () => clientFallback.getBeforeYouBuy(symbol)
+    ),
+
   calculatePlan: (symbol: string, input: any) =>
-    request<any>(`/companies/${symbol}/calculate-plan`, {
-      method: 'POST',
-      body: JSON.stringify(input)
-    }),
+    withFallback(
+      () =>
+        request<any>(`/companies/${symbol}/calculate-plan`, {
+          method: 'POST',
+          body: JSON.stringify(input)
+        }),
+      () => clientFallback.calculatePlan(symbol, input)
+    ),
 
   // Trade Plans
-  getSavedTradePlans: () => request<any[]>('/trade-plans'),
+  getSavedTradePlans: () =>
+    withFallback(() => request<any[]>('/trade-plans'), () => clientFallback.getSavedTradePlans()),
+
   saveTradePlan: (plan: any) =>
-    request<{ message: string; plan: any }>('/trade-plans', {
-      method: 'POST',
-      body: JSON.stringify(plan)
-    }),
+    withFallback(
+      () =>
+        request<{ message: string; plan: any }>('/trade-plans', {
+          method: 'POST',
+          body: JSON.stringify(plan)
+        }),
+      () => clientFallback.saveTradePlan(plan)
+    ),
+
   deleteTradePlan: (id: string) =>
-    request<{ message: string }>(`/trade-plans/${id}`, {
-      method: 'DELETE'
-    }),
+    withFallback(
+      () =>
+        request<{ message: string }>(`/trade-plans/${id}`, {
+          method: 'DELETE'
+        }),
+      () => clientFallback.deleteTradePlan(id)
+    ),
 
   // Watchlist
-  getWatchlist: () => request<any[]>('/watchlist'),
+  getWatchlist: () =>
+    withFallback(() => request<any[]>('/watchlist'), () => clientFallback.getWatchlist()),
+
   addToWatchlist: (symbol: string, notes?: string) =>
-    request<{ message: string; id: string; symbol: string }>('/watchlist', {
-      method: 'POST',
-      body: JSON.stringify({ symbol, notes })
-    }),
+    withFallback(
+      () =>
+        request<{ message: string; id: string; symbol: string }>('/watchlist', {
+          method: 'POST',
+          body: JSON.stringify({ symbol, notes })
+        }),
+      () => clientFallback.addToWatchlist(symbol, notes)
+    ),
+
   removeFromWatchlist: (symbol: string) =>
-    request<{ message: string }>(`/watchlist/${symbol}`, {
-      method: 'DELETE'
-    }),
+    withFallback(
+      () =>
+        request<{ message: string }>(`/watchlist/${symbol}`, {
+          method: 'DELETE'
+        }),
+      () => clientFallback.removeFromWatchlist(symbol)
+    ),
 
   // Alerts
-  getAlerts: () => request<AlertItem[]>('/alerts'),
+  getAlerts: () =>
+    withFallback(() => request<AlertItem[]>('/alerts'), () => clientFallback.getAlerts()),
+
   createAlert: (payload: { symbol: string; alertType: string; targetValue?: number }) =>
-    request<{ message: string; id: string }>('/alerts', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    }),
+    withFallback(
+      () =>
+        request<{ message: string; id: string }>('/alerts', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        }),
+      () => clientFallback.createAlert(payload)
+    ),
+
   toggleAlert: (id: string) =>
-    request<{ message: string; isActive: boolean }>(`/alerts/${id}/toggle`, {
-      method: 'PATCH'
-    }),
+    withFallback(
+      () =>
+        request<{ message: string; isActive: boolean }>(`/alerts/${id}/toggle`, {
+          method: 'PATCH'
+        }),
+      () => clientFallback.toggleAlert(id)
+    ),
+
   deleteAlert: (id: string) =>
-    request<{ message: string }>(`/alerts/${id}`, {
-      method: 'DELETE'
-    }),
+    withFallback(
+      () =>
+        request<{ message: string }>(`/alerts/${id}`, {
+          method: 'DELETE'
+        }),
+      () => clientFallback.deleteAlert(id)
+    ),
+
   getNotifications: () =>
-    request<{ notifications: NotificationItem[]; unreadCount: number }>('/alerts/notifications'),
+    withFallback(
+      () => request<{ notifications: NotificationItem[]; unreadCount: number }>('/alerts/notifications'),
+      () => clientFallback.getNotifications()
+    ),
+
   markNotificationRead: (id: string) =>
-    request<{ message: string }>(`/alerts/notifications/${id}/read`, {
-      method: 'PATCH'
-    }),
+    withFallback(
+      () =>
+        request<{ message: string }>(`/alerts/notifications/${id}/read`, {
+          method: 'PATCH'
+        }),
+      () => clientFallback.markNotificationRead(id)
+    ),
+
   clearAllNotifications: () =>
-    request<{ message: string }>('/alerts/notifications/clear-all', {
-      method: 'POST'
-    }),
+    withFallback(
+      () =>
+        request<{ message: string }>('/alerts/notifications/clear-all', {
+          method: 'POST'
+        }),
+      () => clientFallback.clearAllNotifications()
+    ),
 
   // Portfolio
-  getPortfolioSummary: () => request<PortfolioSummary>('/portfolio/summary'),
-  getTransactions: () => request<any[]>('/portfolio/transactions'),
+  getPortfolioSummary: () =>
+    withFallback(() => request<PortfolioSummary>('/portfolio/summary'), () => clientFallback.getPortfolioSummary()),
+
+  getTransactions: () =>
+    withFallback(() => request<any[]>('/portfolio/transactions'), () => clientFallback.getTransactions()),
+
   calculateFeesPreview: (quantity: number, price: number, isSell = false) =>
-    request<{
-      turnover: number;
-      brokerFee: number;
-      sebonFee: number;
-      dpFee: number;
-      totalFees: number;
-      effectiveRatePct: number;
-    }>('/portfolio/calculate-fees', {
-      method: 'POST',
-      body: JSON.stringify({ quantity, price, isSell })
-    }),
+    withFallback(
+      () =>
+        request<{
+          turnover: number;
+          brokerFee: number;
+          sebonFee: number;
+          dpFee: number;
+          totalFees: number;
+          effectiveRatePct: number;
+        }>('/portfolio/calculate-fees', {
+          method: 'POST',
+          body: JSON.stringify({ quantity, price, isSell })
+        }),
+      () => clientFallback.calculateFeesPreview(quantity, price, isSell)
+    ),
+
   addTransaction: (tx: TransactionInput) =>
-    request<{ message: string; id: string }>('/portfolio/transactions', {
-      method: 'POST',
-      body: JSON.stringify(tx)
-    }),
+    withFallback(
+      () =>
+        request<{ message: string; id: string }>('/portfolio/transactions', {
+          method: 'POST',
+          body: JSON.stringify(tx)
+        }),
+      () => clientFallback.addTransaction(tx)
+    ),
+
   deleteTransaction: (id: string) =>
-    request<{ message: string }>(`/portfolio/transactions/${id}`, {
-      method: 'DELETE'
-    })
+    withFallback(
+      () =>
+        request<{ message: string }>(`/portfolio/transactions/${id}`, {
+          method: 'DELETE'
+        }),
+      () => clientFallback.deleteTransaction(id)
+    )
 };
